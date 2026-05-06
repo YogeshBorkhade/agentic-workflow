@@ -1,52 +1,105 @@
 """
 LangGraph orchestration for multi-agent workflow.
-Wires agents together into a coordinated flow.
+Wires agents together into a coordinated flow with retry logic.
 """
 
 from langgraph.graph import StateGraph, END
 from typing import Literal
 
 from src.orchestration.state import ResearchState
-from src.agents import ClarityAgent
+from src.agents import ClarityAgent, ResearchAgent, ValidatorAgent, SynthesisAgent
 from src.data import get_data_source
 from src.utils import logger
 
 
+def should_retry_research(state: ResearchState) -> Literal["research", "synthesis"]:
+    """
+    Decide whether to retry research or proceed to synthesis.
+    
+    Args:
+        state: Current workflow state
+        
+    Returns:
+        Next node: "research" for retry, "synthesis" to finish
+    """
+    validation_result = state.get("validation_result", "insufficient")
+    attempts = state.get("validation_attempts", 0)
+    max_attempts = 2
+    
+    # If validation passed OR we've tried enough times, go to synthesis
+    if validation_result == "sufficient" or attempts >= max_attempts:
+        logger.info(
+            "Routing to synthesis",
+            validation_result=validation_result,
+            attempts=attempts
+        )
+        return "synthesis"
+    
+    # Otherwise, retry research
+    logger.info(
+        "Routing to research (retry)",
+        validation_result=validation_result,
+        attempts=attempts
+    )
+    return "research"
+
+
 async def create_research_graph():
     """
-    Create the research agent workflow graph.
+    Create the complete research agent workflow graph.
     
     Flow:
-    START → Clarity → (more agents later) → END
+    START → Clarity → Research → Validator → Decision
+                         ↑           ↓
+                         └─(retry)───┘
+                                     ↓
+                                 Synthesis → END
     
     Returns:
         Compiled LangGraph workflow
     """
-    logger.info("Creating research graph")
+    logger.info("Creating research graph with all agents")
     
     # Get data source (mock or real)
     data_source = await get_data_source()
     
-    # Initialize agents
+    # Initialize all agents
     clarity_agent = ClarityAgent(data_source)
+    research_agent = ResearchAgent(data_source)
+    validator_agent = ValidatorAgent(data_source)
+    synthesis_agent = SynthesisAgent(data_source)
     
     # Create graph
     workflow = StateGraph(ResearchState)
     
     # Add nodes (agents)
     workflow.add_node("clarity", clarity_agent)
+    workflow.add_node("research", research_agent)
+    workflow.add_node("validator", validator_agent)
+    workflow.add_node("synthesis", synthesis_agent)
     
     # Define edges (flow)
     workflow.set_entry_point("clarity")
+    workflow.add_edge("clarity", "research")
+    workflow.add_edge("research", "validator")
     
-    # For now, just end after clarity
-    # Later we'll add: clarity → research → validator → synthesis
-    workflow.add_edge("clarity", END)
+    # Conditional edge: validator decides whether to retry or finish
+    workflow.add_conditional_edges(
+        "validator",
+        should_retry_research,
+        {
+            "research": "research",  # Retry research
+            "synthesis": "synthesis"  # Proceed to synthesis
+        }
+    )
+    
+    # End after synthesis
+    workflow.add_edge("synthesis", END)
     
     # Compile graph
     graph = workflow.compile()
     
-    logger.info("Research graph created")
+    logger.info("Research graph created with conditional retry loop")
     return graph
 
 
@@ -76,6 +129,7 @@ async def run_research(query: str, user_id: str | None = None) -> ResearchState:
         f"Research workflow completed",
         request_id=final_state.get("request_id"),
         status=final_state.get("status"),
+        validation_attempts=final_state.get("validation_attempts"),
         agent_trace=final_state.get("agent_trace")
     )
     
@@ -87,30 +141,38 @@ if __name__ == "__main__":
     import asyncio
     
     async def test():
-        print("Testing LangGraph Orchestration...\n")
+        print("Testing Complete LangGraph Workflow...\n")
         
-        # Test query
-        query = "Tell me about Tesla"
+        # Test queries
+        test_queries = [
+            "Tell me about Tesla",
+            "What are Apple's main competitors?",
+        ]
         
-        print(f"Query: {query}\n")
-        print("Running workflow...")
-        print("-" * 50)
+        for query in test_queries:
+            print("=" * 70)
+            print(f"Query: {query}")
+            print("=" * 70)
+            
+            # Run workflow
+            result = await run_research(query)
+            
+            # Show results
+            print(f"\n📊 Results:")
+            print(f"   Company: {result['company_name']}")
+            print(f"   Confidence: {result['confidence_score']}")
+            print(f"   Quality: {result['quality_score']}")
+            print(f"   Validation: {result['validation_result']}")
+            print(f"   Attempts: {result['validation_attempts']}")
+            print(f"   Status: {result['status']}")
+            print(f"\n🔀 Agent Flow: {' → '.join(result['agent_trace'])}")
+            
+            print(f"\n💬 Final Response:")
+            print("-" * 70)
+            print(result['final_response'])
+            print("-" * 70)
+            print()
         
-        # Run workflow
-        result = await run_research(query)
-        
-        print("-" * 50)
-        print("\n✅ Workflow Complete!\n")
-        
-        # Show results
-        print("Results:")
-        print(f"  Request ID: {result['request_id']}")
-        print(f"  Company: {result['company_name']}")
-        print(f"  Status: {result['clarity_status']}")
-        print(f"  Intent: {result['intent']}")
-        print(f"  Agent Trace: {' → '.join(result['agent_trace'])}")
-        print(f"  Overall Status: {result['status']}\n")
-        
-        print("✅ LangGraph working!")
+        print("\n✅ Complete workflow working!")
     
     asyncio.run(test())
