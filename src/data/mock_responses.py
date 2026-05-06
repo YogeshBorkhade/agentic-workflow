@@ -107,6 +107,12 @@ MOCK_LLM_RESPONSES = {
             "entities": ["Tesla", "electric vehicles", "Elon Musk"],
             "intent": "general_information"
         },
+        "apple": {
+            "company_name": "Apple",
+            "clarity_status": "clear",
+            "entities": ["Apple", "technology", "iPhone"],
+            "intent": "competitor_analysis"
+        },
         "default": {
             "company_name": None,
             "clarity_status": "unclear",
@@ -123,6 +129,16 @@ MOCK_LLM_RESPONSES = {
                 "Financial reports"
             ],
             "confidence_score": 8.5,
+            "data_quality": "high"
+        },
+        "apple": {
+            "findings": MOCK_COMPANIES["apple"],
+            "sources": [
+                "Company website",
+                "SEC filings",
+                "Annual reports"
+            ],
+            "confidence_score": 9.0,
             "data_quality": "high"
         },
         "default": {
