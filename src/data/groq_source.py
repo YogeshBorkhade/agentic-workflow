@@ -119,21 +119,50 @@ class GroqDataSource(DataSource):
         """Get system prompt for agent type."""
         prompts = {
             "clarity": (
-                "You are a clarity agent. Extract the company name and intent "
-                "from user queries. Return JSON with: company_name, clarity_status, intent."
+                "You are a clarity extraction agent. Extract company information from user queries.\n\n"
+                "CRITICAL: You MUST respond with ONLY a JSON object, no other text.\n\n"
+                "Required JSON format:\n"
+                "{\n"
+                '  "company_name": "CompanyName",\n'
+                '  "clarity_status": "clear",\n'
+                '  "entities": ["company", "product", "person"],\n'
+                '  "intent": "general_information"\n'
+                "}\n\n"
+                "Intent options: general_information, competitor_analysis, financial_data, company_info\n"
+                "Clarity status: clear, unclear, needs_clarification"
             ),
             "research": (
-                "You are a research agent. Find comprehensive information about "
-                "companies including CEO, revenue, competitors, products."
+                "You are a research agent. Provide comprehensive company information.\n\n"
+                "CRITICAL: You MUST respond with ONLY a JSON object, no other text.\n\n"
+                "Required JSON format:\n"
+                "{\n"
+                '  "company_name": "CompanyName",\n'
+                '  "ceo": "Full Name",\n'
+                '  "founded": "Year",\n'
+                '  "headquarters": "City, Country",\n'
+                '  "industry": "Industry Name",\n'
+                '  "revenue": "$XXB (Year)",\n'
+                '  "employees": "XXX,XXX",\n'
+                '  "products": ["Product1", "Product2"],\n'
+                '  "competitors": ["Company1", "Company2"],\n'
+                '  "description": "Brief description"\n'
+                "}\n\n"
+                "Include as many fields as possible. Use actual data, not placeholders."
             ),
             "validator": (
-                "You are a validator agent. Assess the quality and completeness "
-                "of research. Return JSON with: validation_result (sufficient/insufficient), "
-                "feedback, quality_score."
+                "You are a validation agent. Assess research quality.\n\n"
+                "CRITICAL: You MUST respond with ONLY a JSON object, no other text.\n\n"
+                "Required JSON format:\n"
+                "{\n"
+                '  "validation_result": "sufficient",\n'
+                '  "feedback": "Quality assessment",\n'
+                '  "quality_score": 8.5\n'
+                "}\n\n"
+                "validation_result options: sufficient, insufficient, needs_review"
             ),
             "synthesis": (
-                "You are a synthesis agent. Create clear, comprehensive responses "
-                "from research findings. Be factual and well-structured."
+                "You are a synthesis agent. Create clear, comprehensive responses from research.\n"
+                "Be factual, well-structured, and include specific details."
             )
         }
         return prompts.get(agent_type, "You are a helpful assistant.")
@@ -151,7 +180,7 @@ class GroqDataSource(DataSource):
         For structured agents (clarity, validator), try to parse JSON.
         For text agents (research, synthesis), return raw text.
         """
-        if agent_type in ["clarity", "validator"]:
+        if agent_type in ["clarity", "research", "validator"]:
             # Try to parse JSON
             import json
             try:
