@@ -96,6 +96,12 @@ class ResearchState(TypedDict):
     hitl_pending: bool
 
     # ============================================================================
+    # Evaulation
+    # ============================================================================
+    needs_review: bool  # Flagged by evaluation
+    eval_score: float | None  # LLM judge score
+
+    # ============================================================================
     # VALIDATOR AGENT OUTPUT
     # ============================================================================
     
@@ -200,7 +206,7 @@ def create_initial_state(query: str, user_id: str | None = None) -> ResearchStat
         research_strategy=None,
         
         #HITL outputs (to be filled)
-        htil_approved=False,
+        hitl_approved=False,
         hitl_request_id=None,
         hitl_pending=False,
 
@@ -210,6 +216,9 @@ def create_initial_state(query: str, user_id: str | None = None) -> ResearchStat
         validation_attempts=0,
         missing_info=[],
         quality_score=0.0,
+        
+        needs_review = True  # Flagged by evaluation
+        eval_score = 0.0 | None  # LLM judge score
         
         # Synthesis outputs (to be filled)
         final_response=None,
