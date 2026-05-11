@@ -3,7 +3,7 @@ State definitions for the research agent workflow.
 Defines the shared state that flows through all agents.
 """
 
-from typing import TypedDict, Annotated, Sequence
+from typing import Optional, TypedDict, Annotated, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -87,7 +87,14 @@ class ResearchState(TypedDict):
     
     research_strategy: str | None
     """Description of research approach used."""
+    # ============================================================================
+    # Human in the loop 
+    # ============================================================================
     
+    hitl_approved: bool
+    hitl_request_id: str | None  
+    hitl_pending: bool
+
     # ============================================================================
     # VALIDATOR AGENT OUTPUT
     # ============================================================================
@@ -192,6 +199,11 @@ def create_initial_state(query: str, user_id: str | None = None) -> ResearchStat
         confidence_score=0.0,
         research_strategy=None,
         
+        #HITL outputs (to be filled)
+        htil_approved=False,
+        hitl_request_id=None,
+        hitl_pending=False,
+
         # Validator outputs (to be filled)
         validation_result="pending",
         validation_feedback=None,
