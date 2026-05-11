@@ -8,6 +8,8 @@ from typing import Literal
 
 from src.orchestration.state import ResearchState
 from src.agents import ClarityAgent, ResearchAgent, ValidatorAgent, SynthesisAgent
+from src.hitl import create_hitl_node, HITLSystem
+
 from src.data import get_data_source
 from src.utils import logger
 
@@ -69,6 +71,17 @@ async def create_research_graph():
     validator_agent = ValidatorAgent(data_source)
     synthesis_agent = SynthesisAgent(data_source)
     
+    #initialize HITL system (for potential human intervention in validation)
+    hitl = HITLSystem()
+    
+     
+    # Wrap agents with evaluation
+    clarity_with_eval = wrap_with_evaluation(clarity_agent, evaluation_pipeline, metrics_tracker)
+    research_with_eval = wrap_with_evaluation(research_agent, evaluation_pipeline, metrics_tracker)
+    validator_with_eval = wrap_with_evaluation(validator_agent, evaluation_pipeline, metrics_tracker)
+    synthesis_with_eval = wrap_with_evaluation(synthesis_agent, evaluation_pipeline, metrics_tracker)
+   
+
     # Create graph
     workflow = StateGraph(ResearchState)
     
@@ -76,6 +89,7 @@ async def create_research_graph():
     workflow.add_node("clarity", clarity_agent)
     workflow.add_node("research", research_agent)
     workflow.add_node("validator", validator_agent)
+    workflow.add_node("hitl_checkpoint", create_hitl_node(hitl)) 
     workflow.add_node("synthesis", synthesis_agent)
     
     # Define edges (flow)
@@ -89,9 +103,12 @@ async def create_research_graph():
         should_retry_research,
         {
             "research": "research",  # Retry research
-            "synthesis": "synthesis"  # Proceed to synthesis
+            "synthesis": "hitl_checkpoint"  # go to HITL checkpoint before synthesis for final validation
         }
     )
+    
+    # HITL -> synthesis
+    workflow.add_edge("hitl_checkpoint", "synthesis")
     
     # End after synthesis
     workflow.add_edge("synthesis", END)
