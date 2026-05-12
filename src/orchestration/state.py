@@ -217,8 +217,8 @@ def create_initial_state(query: str, user_id: str | None = None) -> ResearchStat
         missing_info=[],
         quality_score=0.0,
         
-        needs_review = True  # Flagged by evaluation
-        eval_score = 0.0 | None  # LLM judge score
+        needs_review=False,
+        eval_score = None,  # LLM judge score
         
         # Synthesis outputs (to be filled)
         final_response=None,
