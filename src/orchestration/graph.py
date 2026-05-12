@@ -8,6 +8,10 @@ from typing import Literal
 
 from src.orchestration.state import ResearchState
 from src.agents import ClarityAgent, ResearchAgent, ValidatorAgent, SynthesisAgent
+from src.hitl import create_hitl_node, HITLSystem
+
+from src.evaluation import EvaluationPipeline, MetricsTracker
+
 from src.data import get_data_source
 from src.utils import logger
 
@@ -44,7 +48,7 @@ def should_retry_research(state: ResearchState) -> Literal["research", "synthesi
     return "research"
 
 
-async def create_research_graph():
+async def create_research_graph(metrics_tracker: MetricsTracker):
     """
     Create the complete research agent workflow graph.
     
@@ -69,14 +73,27 @@ async def create_research_graph():
     validator_agent = ValidatorAgent(data_source)
     synthesis_agent = SynthesisAgent(data_source)
     
+    #initialize HITL system (for potential human intervention in validation)
+    hitl = HITLSystem()
+    
+    evaluation_pipeline = EvaluationPipeline()
+    
+    # Wrap agents with evaluation
+    clarity_with_eval = wrap_with_evaluation(clarity_agent, evaluation_pipeline, metrics_tracker)
+    research_with_eval = wrap_with_evaluation(research_agent, evaluation_pipeline, metrics_tracker)
+    validator_with_eval = wrap_with_evaluation(validator_agent, evaluation_pipeline, metrics_tracker)
+    synthesis_with_eval = wrap_with_evaluation(synthesis_agent, evaluation_pipeline, metrics_tracker)
+   
+
     # Create graph
     workflow = StateGraph(ResearchState)
     
     # Add nodes (agents)
-    workflow.add_node("clarity", clarity_agent)
-    workflow.add_node("research", research_agent)
-    workflow.add_node("validator", validator_agent)
-    workflow.add_node("synthesis", synthesis_agent)
+    workflow.add_node("clarity", clarity_with_eval)
+    workflow.add_node("research", research_with_eval)
+    workflow.add_node("validator", validator_with_eval)
+    workflow.add_node("hitl_checkpoint", create_hitl_node(hitl)) 
+    workflow.add_node("synthesis", synthesis_with_eval)
     
     # Define edges (flow)
     workflow.set_entry_point("clarity")
@@ -89,9 +106,12 @@ async def create_research_graph():
         should_retry_research,
         {
             "research": "research",  # Retry research
-            "synthesis": "synthesis"  # Proceed to synthesis
+            "synthesis": "hitl_checkpoint"  # go to HITL checkpoint before synthesis for final validation
         }
     )
+    
+    # HITL -> synthesis
+    workflow.add_edge("hitl_checkpoint", "synthesis")
     
     # End after synthesis
     workflow.add_edge("synthesis", END)
@@ -101,6 +121,93 @@ async def create_research_graph():
     
     logger.info("Research graph created with conditional retry loop")
     return graph
+
+
+
+def wrap_with_evaluation(agent, evaluation_pipeline, metrics_tracker):
+    """
+    Wrap agent with automatic evaluation & metrics tracking
+    
+    This decorator:
+    1. Tracks performance (latency, tokens)
+    2. Evaluates output quality (LLM judge + self-assessment)
+    3. Flags low-quality outputs for review
+    """
+    import time
+    from functools import wraps
+    
+    @wraps(agent)
+    async def wrapper(state: ResearchState):
+        request_id = state.get("request_id", "unknown")
+        agent_name = agent.__class__.__name__
+        
+        # Start tracking
+        start_time = time.time()
+        
+        # Run agent
+        result = await agent(state)
+        
+        # Calculate metrics
+        latency_ms = (time.time() - start_time) * 1000
+        tokens = estimate_tokens(result)  # Simple estimation
+        
+        # Track performance
+        metrics_tracker.track_agent(
+            request_id=request_id,
+            agent_name=agent_name,
+            latency_ms=latency_ms,
+            tokens=tokens
+        )
+        
+        # Evaluate quality (only for research and synthesis)
+        if agent_name in ["ResearchAgent", "SynthesisAgent"]:
+            output = get_agent_output(result, agent_name)
+            
+            # LLM judge
+            eval_result = evaluation_pipeline.llm_judge.evaluate(
+                agent_name=agent_name,
+                agent_output=output,
+                original_query=state.get("current_query", ""),
+                request_id=request_id
+            )
+            
+            # Self-assessment
+            self_result = evaluation_pipeline.self_assessor.assess(
+                agent_name=agent_name,
+                agent_output=output,
+                sources=state.get("data_sources", []),
+                request_id=request_id
+            )
+            
+            # Flag if low quality
+            if eval_result.overall_score < 5.0 or self_result.needs_review:
+                result["needs_review"] = True
+                result["eval_score"] = eval_result.overall_score
+                logger.warning(
+                    f"{agent_name} output flagged for review",
+                    score=eval_result.overall_score,
+                    confidence=self_result.overall_score
+                )
+        
+        return result
+    
+    return wrapper
+
+
+def estimate_tokens(state: dict) -> int:
+    """Rough token estimation (4 chars ≈ 1 token)"""
+    text = str(state)
+    return len(text) // 4
+
+
+def get_agent_output(state: dict, agent_name: str) -> str:
+    """Extract relevant output from state based on agent"""
+    if agent_name == "ResearchAgent":
+        return str(state.get("research_findings", ""))
+    elif agent_name == "SynthesisAgent":
+        return state.get("final_response", "")
+    return ""
+
 
 
 async def run_research(query: str, user_id: str | None = None) -> ResearchState:
@@ -116,21 +223,45 @@ async def run_research(query: str, user_id: str | None = None) -> ResearchState:
     """
     from src.orchestration.state import create_initial_state
     
+    metrics_tracker = MetricsTracker()
+    
     logger.info(f"Starting research workflow", query=query)
     
     # Create initial state
     initial_state = create_initial_state(query, user_id)
+    request_id = initial_state["request_id"]
+    
+    metrics_tracker.start_request(request_id)
     
     # Create and run graph
-    graph = await create_research_graph()
+    graph = await create_research_graph(metrics_tracker)
+    
+    # Start metrics tracking
+    # graph.evaluation_pipeline.metrics_tracker.start_request(request_id)
+    
+    # Run workflow
     final_state = await graph.ainvoke(initial_state)
     
+    # Complete metrics
+    success = final_state.get("status") == "completed"
+    retries = final_state.get("validation_attempts", 0)
+    
+    metrics = metrics_tracker.end_request(
+        request_id=request_id,
+        success=success,
+        retry_count=retries
+    )
+    
+    # Log final metrics
     logger.info(
         f"Research workflow completed",
-        request_id=final_state.get("request_id"),
+        request_id=request_id,
         status=final_state.get("status"),
-        validation_attempts=final_state.get("validation_attempts"),
-        agent_trace=final_state.get("agent_trace")
+        validation_attempts=retries,
+        agent_trace=final_state.get("agent_trace"),
+        latency_ms=metrics.total_latency_ms,
+        cost=metrics.estimated_cost,
+        success=success
     )
     
     return final_state
