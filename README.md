@@ -404,5 +404,5 @@ python main.py
 
 ---
 
-**Built by Yogesh Borkhade** | [LinkedIn]([#](https://www.linkedin.com/in/yogesh-borkhade-lead-research-engineer/))
+**Built by Yogesh Borkhade** | [LinkedIn](https://www.linkedin.com/in/yogesh-borkhade-lead-research-engineer/)
 ---
